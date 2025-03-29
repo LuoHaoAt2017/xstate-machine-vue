@@ -1,19 +1,83 @@
-import { setup, fromPromise, assign, assertEvent } from "xstate";
+import { setup, fromPromise, assign, sendTo, sendParent } from "xstate";
+// import type { ActorRef, Snapshot } from "xstate";
+import { getHistoryChats, getChatResponse } from "@/service";
 
-type Chat = {};
-
-async function getHistoryChats(): Promise<Chat[]> {
-  const response = await fetch("https://api.example.com/history");
-  const data = await response.json();
-  return data as Chat[];
-}
+const agentMachine = setup({
+  types: {} as {
+    events: { type: "ASK"; data: string; sender: string };
+    context: {
+      question: string;
+    };
+  },
+  actors: {
+    getResponse: fromPromise(async function ({
+      input,
+    }: {
+      input: { question: string };
+    }) {
+      return await getChatResponse(input.question);
+    }),
+  },
+}).createMachine({
+  id: "agent",
+  context: {
+    question: "",
+  },
+  initial: "idle",
+  states: {
+    idle: {
+      on: {
+        ASK: {
+          target: "loading",
+          actions: assign({
+            question: ({ event }) => event.data,
+          }),
+        },
+      },
+    },
+    loading: {
+      invoke: {
+        src: "getResponse",
+        input: ({ context }) => ({ question: context.question }),
+        onDone: {
+          target: "resolved",
+          actions: sendParent({
+            type: "REPLY",
+            data: "this is answer",
+          }),
+        },
+        onError: {
+          target: "rejected",
+        },
+      },
+    },
+    resolved: {
+      after: {
+        50: {
+          target: "idle",
+        },
+      },
+    },
+    rejected: {
+      after: {
+        50: {
+          target: "idle",
+        },
+      },
+    },
+  },
+});
 
 export const chatMachine = setup({
   types: {} as {
-    context: { chats: Chat[]; question: string };
-    events: { type: "FETCH" };
+    context: { chats: Chat[] };
+    events:
+      | { type: "FETCH" }
+      | { type: "PROCESS"; data: string }
+      | { type: "REPLY"; data: string };
   },
   actors: {
+    agentMachine,
     fetchChatList: fromPromise(async () => {
       return getHistoryChats();
     }),
@@ -21,13 +85,28 @@ export const chatMachine = setup({
 }).createMachine({
   context: {
     chats: [],
-    question: "",
   },
   initial: "idle",
   states: {
     idle: {
       on: {
-        FETCH: "loading",
+        FETCH: {
+          target: "loading",
+        },
+        PROCESS: {
+          actions: [
+            sendTo("agent", ({ self }) => ({
+              type: "ASK",
+              data: "What should we do about this?",
+              sender: self.id,
+            })),
+          ],
+        },
+        REPLY: {
+          actions: ({ event }) => {
+            console.log("receive answer from agent: ", event.data);
+          },
+        },
       },
     },
     loading: {
