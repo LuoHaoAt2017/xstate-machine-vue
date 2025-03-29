@@ -77,7 +77,6 @@ export const chatMachine = setup({
       | { type: "REPLY"; data: string };
   },
   actors: {
-    agentMachine,
     fetchChatList: fromPromise(async () => {
       return getHistoryChats();
     }),
@@ -87,6 +86,9 @@ export const chatMachine = setup({
     chats: [],
   },
   initial: "idle",
+  invoke: {
+    src: agentMachine,
+  },
   states: {
     idle: {
       on: {
